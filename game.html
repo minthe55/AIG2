@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mini Plateforme</title>
+  <style>
+    :root {
+      --sky: #7ec8ff;
+      --ground: #6b4f2c;
+      --brick: #b55d2a;
+      --hero: #e53935;
+      --hero-cap: #ffeb3b;
+      --enemy: #2e7d32;
+      --coin: #ffd54f;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: linear-gradient(#6ec6ff, #a3ddff);
+      display: grid;
+      min-height: 100vh;
+      place-items: center;
+      color: #103b59;
+    }
+
+    .wrap {
+      width: min(1000px, 100vw);
+      padding: 12px;
+    }
+
+    .hud {
+      display: flex;
+      gap: 16px;
+      justify-content: space-between;
+      font-weight: 700;
+      margin-bottom: 8px;
+      background: rgba(255,255,255,.75);
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 2px solid #ffffff;
+    }
+
+    canvas {
+      width: 100%;
+      height: auto;
+      border: 4px solid #fff;
+      border-radius: 10px;
+      background: var(--sky);
+      image-rendering: pixelated;
+      box-shadow: 0 12px 20px rgba(0,0,0,.2);
+    }
+
+    .help {
+      margin-top: 8px;
+      background: rgba(255,255,255,.75);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <span id="score">Score: 0</span>
+      <span id="lives">Vies: 3</span>
+      <span id="state">Objectif: Attrape les pièces et évite les ennemis</span>
+    </div>
+    <canvas id="game" width="960" height="480" aria-label="jeu de plateforme"></canvas>
+    <div class="help">Contrôles: ⬅/➡ pour bouger, Espace ou ⬆ pour sauter, R pour recommencer.</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    const ui = {
+      score: document.getElementById('score'),
+      lives: document.getElementById('lives'),
+      state: document.getElementById('state'),
+    };
+
+    const gravity = 0.55;
+    const worldWidth = 2800;
+
+    const keys = {};
+    addEventListener('keydown', e => {
+      keys[e.key.toLowerCase()] = true;
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
+      if (e.key.toLowerCase() === 'r') resetGame();
+    }, { passive: false });
+    addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+    const level = {
+      platforms: [
+        {x: 0, y: 430, w: worldWidth, h: 50, type: 'ground'},
+        {x: 280, y: 360, w: 130, h: 22, type: 'brick'},
+        {x: 500, y: 315, w: 140, h: 22, type: 'brick'},
+        {x: 760, y: 270, w: 130, h: 22, type: 'brick'},
+        {x: 980, y: 340, w: 160, h: 22, type: 'brick'},
+        {x: 1220, y: 285, w: 130, h: 22, type: 'brick'},
+        {x: 1500, y: 240, w: 150, h: 22, type: 'brick'},
+        {x: 1770, y: 310, w: 170, h: 22, type: 'brick'},
+        {x: 2060, y: 270, w: 140, h: 22, type: 'brick'},
+        {x: 2320, y: 340, w: 150, h: 22, type: 'brick'}
+      ],
+      coins: [
+        {x: 320, y: 325, r: 10}, {x: 565, y: 280, r: 10}, {x: 820, y: 235, r: 10},
+        {x: 1060, y: 305, r: 10}, {x: 1278, y: 250, r: 10}, {x: 1560, y: 205, r: 10},
+        {x: 1830, y: 275, r: 10}, {x: 2125, y: 235, r: 10}, {x: 2385, y: 305, r: 10}
+      ],
+      enemies: [
+        {x: 600, y: 402, w: 30, h: 28, dir: 1, minX: 520, maxX: 760, speed: 1.25},
+        {x: 1350, y: 402, w: 30, h: 28, dir: -1, minX: 1260, maxX: 1480, speed: 1.5},
+        {x: 2180, y: 402, w: 30, h: 28, dir: 1, minX: 2050, maxX: 2350, speed: 1.3}
+      ],
+      goal: { x: 2660, y: 350, w: 20, h: 80 }
+    };
+
+    let cameraX = 0;
+    let score = 0;
+    let lives = 3;
+    let win = false;
+    let invincibleFrames = 0;
+
+    const player = {
+      x: 40, y: 360, w: 30, h: 45,
+      vx: 0, vy: 0,
+      speed: 3.1,
+      jump: 11.2,
+      onGround: false
+    };
+
+    const cloneLevelState = () => ({
+      coins: level.coins.map(c => ({...c, taken: false})),
+      enemies: level.enemies.map(e => ({...e})),
+    });
+
+    let state = cloneLevelState();
+
+    function resetPlayer() {
+      player.x = 40;
+      player.y = 360;
+      player.vx = 0;
+      player.vy = 0;
+      cameraX = 0;
+      invincibleFrames = 90;
+    }
+
+    function resetGame() {
+      score = 0;
+      lives = 3;
+      win = false;
+      state = cloneLevelState();
+      resetPlayer();
+      ui.state.textContent = 'Objectif: Attrape les pièces et évite les ennemis';
+      updateHud();
+    }
+
+    function rectIntersect(a, b) {
+      return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    function updatePlayer() {
+      if (win || lives <= 0) return;
+
+      const left = keys['arrowleft'] || keys['q'];
+      const right = keys['arrowright'] || keys['d'];
+      const jump = keys['arrowup'] || keys[' '] || keys['z'];
+
+      player.vx = 0;
+      if (left) player.vx = -player.speed;
+      if (right) player.vx = player.speed;
+
+      if (jump && player.onGround) {
+        player.vy = -player.jump;
+        player.onGround = false;
+      }
+
+      player.vy += gravity;
+      player.x += player.vx;
+      handleHorizontalCollisions();
+
+      player.y += player.vy;
+      player.onGround = false;
+      handleVerticalCollisions();
+
+      if (player.y > canvas.height + 100) {
+        loseLife();
+      }
+
+      cameraX = Math.max(0, Math.min(player.x - canvas.width * 0.35, worldWidth - canvas.width));
+      if (invincibleFrames > 0) invincibleFrames--;
+    }
+
+    function handleHorizontalCollisions() {
+      for (const p of level.platforms) {
+        if (!rectIntersect(player, p)) continue;
+        if (player.vx > 0) player.x = p.x - player.w;
+        else if (player.vx < 0) player.x = p.x + p.w;
+      }
+    }
+
+    function handleVerticalCollisions() {
+      for (const p of level.platforms) {
+        if (!rectIntersect(player, p)) continue;
+
+        if (player.vy > 0) {
+          player.y = p.y - player.h;
+          player.vy = 0;
+          player.onGround = true;
+        } else if (player.vy < 0) {
+          player.y = p.y + p.h;
+          player.vy = 0;
+        }
+      }
+    }
+
+    function updateEnemies() {
+      for (const enemy of state.enemies) {
+        enemy.x += enemy.speed * enemy.dir;
+        if (enemy.x < enemy.minX || enemy.x + enemy.w > enemy.maxX) enemy.dir *= -1;
+
+        if (!win && lives > 0 && invincibleFrames === 0 && rectIntersect(player, enemy)) {
+          if (player.vy > 2 && player.y + player.h - 8 < enemy.y) {
+            player.vy = -8;
+            enemy.x = enemy.minX;
+            score += 150;
+          } else {
+            loseLife();
+          }
+        }
+      }
+    }
+
+    function updateCoins() {
+      for (const coin of state.coins) {
+        if (coin.taken) continue;
+        const dx = (player.x + player.w / 2) - coin.x;
+        const dy = (player.y + player.h / 2) - coin.y;
+        if (Math.hypot(dx, dy) < 23) {
+          coin.taken = true;
+          score += 100;
+        }
+      }
+    }
+
+    function checkGoal() {
+      if (!win && rectIntersect(player, level.goal)) {
+        win = true;
+        score += 500;
+        ui.state.textContent = 'Bravo ! Niveau terminé 🎉 (R pour rejouer)';
+      }
+    }
+
+    function loseLife() {
+      lives--;
+      if (lives <= 0) {
+        lives = 0;
+        ui.state.textContent = 'Perdu 💀 (R pour recommencer)';
+      }
+      resetPlayer();
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = '#7ec8ff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      for (let i = 0; i < 7; i++) {
+        const x = (i * 260 - (cameraX * 0.3) % 260);
+        const y = 50 + (i % 3) * 35;
+        ctx.beginPath();
+        ctx.ellipse(x, y, 42, 20, 0, 0, Math.PI * 2);
+        ctx.ellipse(x + 30, y - 6, 38, 18, 0, 0, Math.PI * 2);
+        ctx.ellipse(x + 60, y, 35, 16, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawWorld() {
+      ctx.save();
+      ctx.translate(-cameraX, 0);
+
+      for (const p of level.platforms) {
+        if (p.type === 'ground') {
+          ctx.fillStyle = 'var(--ground)';
+          ctx.fillRect(p.x, p.y, p.w, p.h);
+          ctx.fillStyle = '#4caf50';
+          ctx.fillRect(p.x, p.y, p.w, 10);
+        } else {
+          ctx.fillStyle = 'var(--brick)';
+          ctx.fillRect(p.x, p.y, p.w, p.h);
+          ctx.strokeStyle = '#7a3c1b';
+          for (let x = p.x; x < p.x + p.w; x += 22) {
+            ctx.beginPath();
+            ctx.moveTo(x, p.y);
+            ctx.lineTo(x, p.y + p.h);
+            ctx.stroke();
+          }
+        }
+      }
+
+      for (const coin of state.coins) {
+        if (coin.taken) continue;
+        ctx.fillStyle = 'var(--coin)';
+        ctx.beginPath();
+        ctx.arc(coin.x, coin.y, coin.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#e6a700';
+        ctx.stroke();
+      }
+
+      for (const enemy of state.enemies) {
+        ctx.fillStyle = 'var(--enemy)';
+        ctx.fillRect(enemy.x, enemy.y, enemy.w, enemy.h);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(enemy.x + 5, enemy.y + 8, 6, 6);
+        ctx.fillRect(enemy.x + 19, enemy.y + 8, 6, 6);
+      }
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(level.goal.x, level.goal.y, level.goal.w, level.goal.h);
+      ctx.fillStyle = '#f44336';
+      ctx.fillRect(level.goal.x + level.goal.w, level.goal.y, 34, 20);
+
+      if (!(invincibleFrames % 6 < 3)) {
+        ctx.fillStyle = 'var(--hero)';
+        ctx.fillRect(player.x, player.y + 12, player.w, player.h - 12);
+        ctx.fillStyle = 'var(--hero-cap)';
+        ctx.fillRect(player.x - 2, player.y + 4, player.w + 4, 12);
+        ctx.fillStyle = '#1d1d1d';
+        ctx.fillRect(player.x + 20, player.y + 17, 4, 4);
+      }
+
+      ctx.restore();
+    }
+
+    function updateHud() {
+      ui.score.textContent = `Score: ${score}`;
+      ui.lives.textContent = `Vies: ${lives}`;
+    }
+
+    function loop() {
+      updatePlayer();
+      updateEnemies();
+      updateCoins();
+      checkGoal();
+      updateHud();
+      drawBackground();
+      drawWorld();
+      requestAnimationFrame(loop);
+    }
+
+    resetGame();
+    loop();
+  </script>
+</body>
+</html>
