@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Casse-brique Rose - Fleurs</title>
+  <style>
+    :root {
+      --pink-1: #ffd6e8;
+      --pink-2: #ff9fc9;
+      --pink-3: #ff6fae;
+      --pink-4: #e5488a;
+      --bg: #fff4fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 20% 10%, #fff, var(--bg) 40%, #ffe6f2 100%);
+      color: #7a1c4a;
+    }
+    .wrap {
+      text-align: center;
+    }
+    h1 {
+      margin: 0 0 0.3rem;
+      color: var(--pink-4);
+      text-shadow: 0 2px 0 #fff;
+    }
+    .hint {
+      margin: 0 0 0.8rem;
+      font-size: 0.95rem;
+      color: #9e3f6b;
+    }
+    canvas {
+      border: 4px solid var(--pink-3);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(229, 72, 138, 0.2);
+      background: linear-gradient(180deg, #fff, #ffe9f4);
+    }
+    .stats {
+      margin-top: 0.7rem;
+      font-weight: bold;
+      color: #a62f67;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🌸 Casse-brique Rose 🌸</h1>
+    <p class="hint">Déplace la raquette avec ← → et tire des fleurs avec Espace.</p>
+    <canvas id="game" width="820" height="520"></canvas>
+    <div class="stats" id="stats">Score: 0 | Vies: 3</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const stats = document.getElementById("stats");
+
+    const state = {
+      score: 0,
+      lives: 3,
+      running: true,
+      won: false,
+      left: false,
+      right: false,
+    };
+
+    const paddle = {
+      w: 140,
+      h: 16,
+      x: canvas.width / 2 - 70,
+      y: canvas.height - 42,
+      speed: 9,
+    };
+
+    const ball = {
+      x: canvas.width / 2,
+      y: canvas.height - 70,
+      r: 9,
+      dx: 4,
+      dy: -4,
+    };
+
+    const bullets = [];
+    const bulletSpeed = 8;
+    let lastShot = 0;
+
+    const brick = {
+      rows: 6,
+      cols: 12,
+      w: 58,
+      h: 22,
+      pad: 8,
+      top: 70,
+      left: 24,
+    };
+
+    const bricks = [];
+    for (let r = 0; r < brick.rows; r++) {
+      bricks[r] = [];
+      for (let c = 0; c < brick.cols; c++) {
+        bricks[r][c] = { alive: true, hp: 1 + (r > 2 ? 1 : 0) };
+      }
+    }
+
+    function drawFlower(x, y, size = 8) {
+      const petals = 6;
+      for (let i = 0; i < petals; i++) {
+        const a = (Math.PI * 2 * i) / petals;
+        const px = x + Math.cos(a) * size * 0.9;
+        const py = y + Math.sin(a) * size * 0.9;
+        ctx.beginPath();
+        ctx.arc(px, py, size * 0.45, 0, Math.PI * 2);
+        ctx.fillStyle = "#ff78b4";
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(x, y, size * 0.42, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffd94a";
+      ctx.fill();
+    }
+
+    function drawBricks() {
+      for (let r = 0; r < brick.rows; r++) {
+        for (let c = 0; c < brick.cols; c++) {
+          const b = bricks[r][c];
+          if (!b.alive) continue;
+          const x = c * (brick.w + brick.pad) + brick.left;
+          const y = r * (brick.h + brick.pad) + brick.top;
+
+          ctx.fillStyle = b.hp === 2 ? "#ff7ab7" : "#ffb7d8";
+          ctx.fillRect(x, y, brick.w, brick.h);
+          ctx.strokeStyle = "#e14d90";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, brick.w, brick.h);
+
+          if (b.hp === 2) {
+            ctx.fillStyle = "rgba(255,255,255,0.75)";
+            ctx.fillRect(x + 8, y + 6, brick.w - 16, 4);
+          }
+        }
+      }
+    }
+
+    function drawPaddle() {
+      ctx.fillStyle = "#e5488a";
+      ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+      ctx.fillStyle = "#ffb5d6";
+      ctx.fillRect(paddle.x + 8, paddle.y + 4, paddle.w - 16, 4);
+    }
+
+    function drawBall() {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fillStyle = "#d63e82";
+      ctx.fill();
+      ctx.closePath();
+    }
+
+    function drawBullets() {
+      bullets.forEach((b) => drawFlower(b.x, b.y, 7));
+    }
+
+    function updatePaddle() {
+      if (state.left) paddle.x -= paddle.speed;
+      if (state.right) paddle.x += paddle.speed;
+      paddle.x = Math.max(0, Math.min(canvas.width - paddle.w, paddle.x));
+    }
+
+    function updateBall() {
+      ball.x += ball.dx;
+      ball.y += ball.dy;
+
+      if (ball.x - ball.r < 0 || ball.x + ball.r > canvas.width) ball.dx *= -1;
+      if (ball.y - ball.r < 0) ball.dy *= -1;
+
+      if (
+        ball.y + ball.r >= paddle.y &&
+        ball.x >= paddle.x &&
+        ball.x <= paddle.x + paddle.w
+      ) {
+        const offset = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+        ball.dx = offset * 6;
+        ball.dy = -Math.abs(ball.dy);
+      }
+
+      if (ball.y - ball.r > canvas.height) {
+        state.lives--;
+        if (state.lives <= 0) {
+          state.running = false;
+        } else {
+          resetBall();
+        }
+      }
+    }
+
+    function updateBullets() {
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.y -= bulletSpeed;
+        if (b.y < -12) bullets.splice(i, 1);
+      }
+    }
+
+    function collisions() {
+      let remaining = 0;
+      for (let r = 0; r < brick.rows; r++) {
+        for (let c = 0; c < brick.cols; c++) {
+          const b = bricks[r][c];
+          if (!b.alive) continue;
+          remaining++;
+
+          const x = c * (brick.w + brick.pad) + brick.left;
+          const y = r * (brick.h + brick.pad) + brick.top;
+
+          if (
+            ball.x > x &&
+            ball.x < x + brick.w &&
+            ball.y - ball.r < y + brick.h &&
+            ball.y + ball.r > y
+          ) {
+            ball.dy *= -1;
+            b.hp--;
+            if (b.hp <= 0) {
+              b.alive = false;
+              state.score += 10;
+              remaining--;
+            }
+          }
+
+          for (let i = bullets.length - 1; i >= 0; i--) {
+            const shot = bullets[i];
+            if (shot.x > x && shot.x < x + brick.w && shot.y > y && shot.y < y + brick.h) {
+              bullets.splice(i, 1);
+              b.hp--;
+              if (b.hp <= 0) {
+                b.alive = false;
+                state.score += 12;
+                remaining--;
+              }
+            }
+          }
+        }
+      }
+
+      if (remaining === 0) {
+        state.running = false;
+        state.won = true;
+      }
+    }
+
+    function resetBall() {
+      ball.x = canvas.width / 2;
+      ball.y = canvas.height - 70;
+      ball.dx = (Math.random() > 0.5 ? 1 : -1) * 4;
+      ball.dy = -4;
+      bullets.length = 0;
+    }
+
+    function shoot() {
+      const now = performance.now();
+      if (now - lastShot < 180) return;
+      lastShot = now;
+
+      bullets.push({ x: paddle.x + 24, y: paddle.y - 8 });
+      bullets.push({ x: paddle.x + paddle.w - 24, y: paddle.y - 8 });
+    }
+
+    function drawOverlay() {
+      if (state.running) return;
+      ctx.fillStyle = "rgba(255, 240, 248, 0.88)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#b92f70";
+      ctx.font = "bold 48px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.fillText(state.won ? "Victoire Fleurie !" : "Game Over", canvas.width / 2, canvas.height / 2 - 16);
+      ctx.font = "24px Trebuchet MS";
+      ctx.fillText("Appuie sur Entrée pour rejouer", canvas.width / 2, canvas.height / 2 + 34);
+    }
+
+    function updateStats() {
+      stats.textContent = `Score: ${state.score} | Vies: ${state.lives}`;
+    }
+
+    function loop() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBricks();
+      drawPaddle();
+      drawBall();
+      drawBullets();
+
+      if (state.running) {
+        updatePaddle();
+        updateBall();
+        updateBullets();
+        collisions();
+      }
+
+      drawOverlay();
+      updateStats();
+      requestAnimationFrame(loop);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") state.left = true;
+      if (e.key === "ArrowRight") state.right = true;
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (state.running) shoot();
+      }
+      if (e.key === "Enter" && !state.running) {
+        restart();
+      }
+    });
+
+    document.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowLeft") state.left = false;
+      if (e.key === "ArrowRight") state.right = false;
+    });
+
+    function restart() {
+      state.score = 0;
+      state.lives = 3;
+      state.running = true;
+      state.won = false;
+      paddle.x = canvas.width / 2 - paddle.w / 2;
+      for (let r = 0; r < brick.rows; r++) {
+        for (let c = 0; c < brick.cols; c++) {
+          bricks[r][c].alive = true;
+          bricks[r][c].hp = 1 + (r > 2 ? 1 : 0);
+        }
+      }
+      resetBall();
+    }
+
+    loop();
+  </script>
+</body>
+</html>
